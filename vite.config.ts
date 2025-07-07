@@ -10,7 +10,7 @@ export default defineConfig({
       formats: ["es", "cjs"],
     },
     rollupOptions: {
-      external: ["vite", "path", "fs", "esbuild"],
+      external: ["vite", "path", "fs", "esbuild", "@preact/signals-core"],
     },
     target: "node20",
     minify: false,

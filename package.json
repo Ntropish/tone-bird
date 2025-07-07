@@ -11,7 +11,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:ui": "vitest --ui"
+    "test:ui": "vitest --ui",
+    "test:birds": "node test-birds.js"
   },
   "keywords": [],
   "author": "",
@@ -20,6 +21,7 @@
     "@preact/signals-core": "^1.11.0",
     "@vitest/ui": "^3.2.4",
     "lodash-es": "^4.17.21",
+    "terminal-kit": "^3.1.2",
     "vite": "^7.0.0",
     "vite-plugin-dts": "^4.5.4",
     "vitest": "^3.2.4"
