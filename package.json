@@ -17,6 +17,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@preact/signals-core": "^1.11.0",
     "@vitest/ui": "^3.2.4",
     "lodash-es": "^4.17.21",
     "vite": "^7.0.0",
