@@ -1,4 +1,5 @@
-import { signal } from "@preact/signals-core";
+import { signal } from '@preact/signals-core';
+
 const BASE_BPM = 120;
 const RATIO_SET = [
   // <num , den>
@@ -65,103 +66,173 @@ const getArrangementPosition = (bpm) => {
     totalBeats: beatsInLoop
   };
 };
+
 function createBird(config) {
   validateBirdConfig(config);
   const birdSignal = signal({
+    notes: [],
     currentTime: 0,
     currentBeat: 0,
     currentMeasure: 0,
     beatInMeasure: 0,
-    playingNotes: [],
-    upcomingNotes: []
+    loopIteration: 0,
+    isCurrentMeasureActive: true,
+    activeMeasures: [],
+    loopLengthSeconds: getLoopLengthSeconds(config.bpm),
+    loopProgress: 0,
+    upcomingNotesCount: 0,
+    recentlyPlayedNotesCount: 0,
+    currentlyPlayingNotesCount: 0
   });
-  const updatePlayingNotes = () => {
-    const currentTime = getCurrentPlaybackTime();
+  const getCurrentTime = config.timers?.getCurrentTime || getCurrentPlaybackTime;
+  const setIntervalTimer = config.timers?.setInterval || setInterval;
+  const clearIntervalTimer = config.timers?.clearInterval || clearInterval;
+  const updateNotes = () => {
+    const currentTime = getCurrentTime();
     const loopLength = getLoopLengthSeconds(config.bpm);
-    const position = getArrangementPosition(config.bpm);
-    const isActiveMeasure = config.arrangement?.[position.measure] ?? true;
-    if (!isActiveMeasure) {
-      birdSignal.value = {
-        ...birdSignal.value,
-        currentTime,
-        currentBeat: position.totalBeats,
-        currentMeasure: position.measure,
-        beatInMeasure: position.beatInMeasure,
-        playingNotes: [],
-        upcomingNotes: []
-      };
-      return;
-    }
-    const playingNotes = [];
-    const upcomingNotes = [];
+    getArrangementPosition(config.bpm);
+    const notes = [];
     const beatsPerSecond = config.bpm / 60;
     const secondsPerBeat = 1 / beatsPerSecond;
-    const loopTime = currentTime % loopLength;
-    if (config.upcomingNotes) {
-      const { loopInterval, lookaheadDistance } = config.upcomingNotes;
-      const lookaheadEndTime = currentTime + lookaheadDistance;
-      const currentLoopIteration = Math.floor(currentTime / loopLength);
-      const endLoopIteration = Math.ceil(lookaheadEndTime / loopLength);
-      for (let loopIteration = currentLoopIteration; loopIteration <= endLoopIteration; loopIteration++) {
-        const loopStartTime = loopIteration * loopLength;
-        const loopEndTime = loopStartTime + loopLength;
-        if (loopStartTime < lookaheadEndTime && loopEndTime > currentTime) {
+    const lookaheadDistance = config.lookaheadDistance || 2;
+    const retentionTime = config.retentionTime || 0.5;
+    const lookaheadEndTime = currentTime + lookaheadDistance;
+    const retentionStartTime = currentTime - retentionTime;
+    const currentLoopTime = currentTime % loopLength;
+    const currentLoopIteration = Math.floor(currentTime / loopLength);
+    const currentBeat = currentTime * beatsPerSecond;
+    const currentMeasure = Math.floor(currentBeat % 64 / 4);
+    const beatInMeasure = Math.floor(currentBeat % 64 % 4);
+    let upcomingNotesCount = 0;
+    let recentlyPlayedNotesCount = 0;
+    let currentlyPlayingNotesCount = 0;
+    const lookaheadEndLoopTime = currentLoopTime + lookaheadDistance;
+    const loopsToCheck = lookaheadEndLoopTime > loopLength ? 2 : 1;
+    for (let loopOffset = 0; loopOffset < loopsToCheck; loopOffset++) {
+      const loopStartTime = (currentLoopIteration + loopOffset) * loopLength;
+      for (let measure = 0; measure < 16; measure++) {
+        const isMeasureActive = config.arrangement?.[measure] ?? true;
+        if (isMeasureActive) {
           for (const note of config.notes) {
             const noteStartTimeInLoop = note.start * secondsPerBeat;
             const noteEndTimeInLoop = noteStartTimeInLoop + note.duration * secondsPerBeat;
-            const noteStartTimeGlobal = loopStartTime + noteStartTimeInLoop;
-            const noteEndTimeGlobal = loopStartTime + noteEndTimeInLoop;
-            if (noteStartTimeGlobal >= currentTime && noteStartTimeGlobal < lookaheadEndTime) {
-              const noteBeatInLoop = note.start;
-              const noteMeasure = Math.floor(noteBeatInLoop / 4);
-              const isNoteMeasureActive = config.arrangement?.[noteMeasure] ?? true;
-              if (isNoteMeasureActive) {
-                upcomingNotes.push({
-                  id: note.id,
-                  note,
-                  startTime: noteStartTimeGlobal,
-                  endTime: noteEndTimeGlobal,
-                  loopIteration
-                });
-              }
+            const measureStartTimeInLoop = measure * 4 * secondsPerBeat;
+            const noteStartTimeGlobal = loopStartTime + measureStartTimeInLoop + noteStartTimeInLoop;
+            const noteEndTimeGlobal = loopStartTime + measureStartTimeInLoop + noteEndTimeInLoop;
+            const noteIsCurrentlyPlaying = currentTime >= noteStartTimeGlobal && currentTime < noteEndTimeGlobal;
+            const noteWillPlaySoon = noteStartTimeGlobal >= currentTime && noteStartTimeGlobal < lookaheadEndTime;
+            const noteRecentlyPlayed = noteEndTimeGlobal >= retentionStartTime && noteEndTimeGlobal <= currentTime;
+            if (noteIsCurrentlyPlaying) {
+              currentlyPlayingNotesCount++;
+            }
+            if (noteWillPlaySoon) {
+              upcomingNotesCount++;
+            }
+            if (noteRecentlyPlayed) {
+              recentlyPlayedNotesCount++;
+            }
+            if (noteIsCurrentlyPlaying || noteWillPlaySoon || noteRecentlyPlayed) {
+              notes.push({
+                id: note.id,
+                note,
+                startTime: noteStartTimeGlobal * 1e3,
+                // Convert to ms
+                endTime: noteEndTimeGlobal * 1e3
+                // Convert to ms
+              });
             }
           }
         }
       }
-      upcomingNotes.sort((a, b) => a.startTime - b.startTime);
     }
-    for (const note of config.notes) {
-      const noteStartTime = note.start * secondsPerBeat;
-      const noteEndTime = noteStartTime + note.duration * secondsPerBeat;
-      if (loopTime >= noteStartTime && loopTime < noteEndTime) {
-        const noteInstanceStartTime = currentTime - (loopTime - noteStartTime);
-        const noteInstanceEndTime = noteInstanceStartTime + note.duration * secondsPerBeat;
-        const currentTimeInNote = loopTime - noteStartTime;
-        playingNotes.push({
-          id: note.id,
-          note,
-          startTime: noteInstanceStartTime,
-          endTime: noteInstanceEndTime,
-          currentTime: currentTimeInNote
-        });
+    notes.sort((a, b) => a.startTime - b.startTime);
+    const activeMeasures = [];
+    for (let i = 0; i < 16; i++) {
+      if (config.arrangement?.[i] ?? true) {
+        activeMeasures.push(i);
       }
     }
+    const isCurrentMeasureActive = config.arrangement?.[currentMeasure] ?? true;
     birdSignal.value = {
-      ...birdSignal.value,
+      notes,
       currentTime,
-      currentBeat: position.totalBeats,
-      currentMeasure: position.measure,
-      beatInMeasure: position.beatInMeasure,
-      playingNotes,
-      upcomingNotes
+      currentBeat: currentBeat % 64,
+      currentMeasure,
+      beatInMeasure,
+      loopIteration: currentLoopIteration,
+      isCurrentMeasureActive,
+      activeMeasures,
+      loopLengthSeconds: loopLength,
+      loopProgress: currentLoopTime / loopLength,
+      upcomingNotesCount,
+      recentlyPlayedNotesCount,
+      currentlyPlayingNotesCount
     };
   };
-  const computedSignal = signal(() => {
-    updatePlayingNotes();
-    return birdSignal.value;
-  });
+  const updateInterval = config.updateInterval || 50;
+  const updateTimer = setIntervalTimer(() => {
+    updateNotes();
+  }, updateInterval);
+  updateNotes();
+  const getCurrentTiming = () => {
+    const state = birdSignal.value;
+    return {
+      time: state.currentTime,
+      beat: state.currentBeat,
+      measure: state.currentMeasure,
+      beatInMeasure: state.beatInMeasure,
+      loopIteration: state.loopIteration,
+      loopProgress: state.loopProgress
+    };
+  };
+  const getArrangementStatus = () => {
+    const state = birdSignal.value;
+    return {
+      isCurrentMeasureActive: state.isCurrentMeasureActive,
+      activeMeasures: state.activeMeasures,
+      currentMeasure: state.currentMeasure
+    };
+  };
+  const getPerformanceStats = () => {
+    const state = birdSignal.value;
+    return {
+      totalNotes: state.notes.length,
+      currentlyPlaying: state.currentlyPlayingNotesCount,
+      upcoming: state.upcomingNotesCount,
+      recentlyPlayed: state.recentlyPlayedNotesCount
+    };
+  };
+  const getNotesByStatus = () => {
+    const state = birdSignal.value;
+    const currentTime = state.currentTime * 1e3;
+    return {
+      currentlyPlaying: state.notes.filter(
+        (note) => currentTime >= note.startTime && currentTime < note.endTime
+      ),
+      upcoming: state.notes.filter((note) => note.startTime > currentTime),
+      recentlyPlayed: state.notes.filter((note) => note.endTime <= currentTime)
+    };
+  };
+  const getLoopInfo = () => {
+    const state = birdSignal.value;
+    return {
+      loopLength: state.loopLengthSeconds,
+      progress: state.loopProgress,
+      iteration: state.loopIteration,
+      timeInLoop: state.currentTime % state.loopLengthSeconds
+    };
+  };
   return {
-    signal: computedSignal
+    signal: birdSignal,
+    dispose: () => {
+      clearIntervalTimer(updateTimer);
+    },
+    // Helper methods for UI rendering
+    getCurrentTiming,
+    getArrangementStatus,
+    getPerformanceStats,
+    getNotesByStatus,
+    getLoopInfo
   };
 }
 function validateBirdConfig(config) {
@@ -222,35 +293,32 @@ function validateBirdConfig(config) {
       }
     }
   }
-  if (config.upcomingNotes !== void 0) {
-    const upcoming = config.upcomingNotes;
-    if (typeof upcoming.loopInterval !== "number" || upcoming.loopInterval <= 0) {
-      throw new Error("Upcoming notes loop interval must be a positive number");
+  if (config.lookaheadDistance !== void 0) {
+    if (typeof config.lookaheadDistance !== "number" || config.lookaheadDistance <= 0) {
+      throw new Error("Lookahead distance must be a positive number");
     }
-    if (typeof upcoming.lookaheadDistance !== "number" || upcoming.lookaheadDistance <= 0) {
-      throw new Error(
-        "Upcoming notes lookahead distance must be a positive number"
-      );
+  }
+  if (config.updateInterval !== void 0) {
+    if (typeof config.updateInterval !== "number" || config.updateInterval <= 0) {
+      throw new Error("Update interval must be a positive number");
     }
-    if (upcoming.lookaheadDistance < upcoming.loopInterval) {
-      throw new Error(
-        "Lookahead distance must be at least as large as loop interval"
-      );
+  }
+  if (config.retentionTime !== void 0) {
+    if (typeof config.retentionTime !== "number" || config.retentionTime < 0) {
+      throw new Error("Retention time must be a non-negative number");
+    }
+  }
+  if (config.timers !== void 0) {
+    if (config.timers.getCurrentTime !== void 0 && typeof config.timers.getCurrentTime !== "function") {
+      throw new Error("getCurrentTime must be a function");
+    }
+    if (config.timers.setInterval !== void 0 && typeof config.timers.setInterval !== "function") {
+      throw new Error("setInterval must be a function");
+    }
+    if (config.timers.clearInterval !== void 0 && typeof config.timers.clearInterval !== "function") {
+      throw new Error("clearInterval must be a function");
     }
   }
 }
-export {
-  BASE_BPM,
-  RATIO_SET,
-  STANDARD_BPMS,
-  createBird,
-  createNote,
-  getArrangementPosition,
-  getBeatInMeasure,
-  getCurrentBeat,
-  getCurrentMeasure,
-  getCurrentPlaybackTime,
-  getLoopLengthSeconds,
-  getStandardBpms,
-  snapBpm
-};
+
+export { BASE_BPM, RATIO_SET, STANDARD_BPMS, createBird, createNote, getArrangementPosition, getBeatInMeasure, getCurrentBeat, getCurrentMeasure, getCurrentPlaybackTime, getLoopLengthSeconds, getStandardBpms, snapBpm };

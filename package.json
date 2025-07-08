@@ -12,7 +12,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:ui": "vitest --ui",
-    "test:birds": "node test-birds.js"
+    "test:birds": "node test-birds.js",
+    "play:birds": "node playbirds.js"
   },
   "keywords": [],
   "author": "",

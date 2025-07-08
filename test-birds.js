@@ -1,7 +1,5 @@
 import { createBird, createNote } from "./dist/index.js";
-import terminal from "terminal-kit";
-
-const term = terminal.terminal;
+import { effect } from "@preact/signals-core";
 
 // A Major scale notes (A, B, C#, D, E, F#, G#, A)
 const A_MAJOR_NOTES = [
@@ -41,10 +39,9 @@ const aMajorBird = createBird({
     createNote(`major-${note.name}`, index, 0.5, note.pitch, { volume: 0.7 })
   ),
   arrangement: aMajorArrangement,
-  upcomingNotes: {
-    loopInterval: 0.5,
-    lookaheadDistance: 2.0,
-  },
+  updateInterval: 50,
+  lookaheadDistance: 2.0,
+  retentionTime: 0.5,
 });
 
 // Create A Minor bird - plays for measures 3, 7, 11, 15
@@ -60,121 +57,119 @@ const aMinorBird = createBird({
     createNote(`minor-${note.name}`, index, 0.5, note.pitch, { volume: 0.7 })
   ),
   arrangement: aMinorArrangement,
-  upcomingNotes: {
-    loopInterval: 0.5,
-    lookaheadDistance: 2.0,
-  },
+  updateInterval: 50,
+  lookaheadDistance: 2.0,
+  retentionTime: 0.5,
 });
-
-// Clear screen and set up display
-term.clear();
-term.moveTo(1, 1);
-term.cyan("🎵 Tone Bird Test - A Major & A Minor Patterns\n\n");
-
-// Function to format time
-const formatTime = (seconds) => {
-  const mins = Math.floor(seconds / 60);
-  const secs = Math.floor(seconds % 60);
-  const ms = Math.floor((seconds % 1) * 1000);
-  return `${mins.toString().padStart(2, "0")}:${secs
-    .toString()
-    .padStart(2, "0")}.${ms.toString().padStart(3, "0")}`;
-};
-
-// Function to format beat position
-const formatBeat = (beat) => {
-  const measure = Math.floor(beat / 4) + 1;
-  const beatInMeasure = (beat % 4) + 1;
-  return `M${measure}.${beatInMeasure}`;
-};
 
 // Function to display notes
 const displayNotes = (notes, prefix) => {
-  if (notes.length === 0) {
-    term.gray(`${prefix}: None\n`);
+  if (!notes || !Array.isArray(notes) || notes.length === 0) {
+    console.log(`${prefix}: None`);
   } else {
-    term.green(`${prefix}: `);
-    notes.forEach((note, index) => {
-      if (index > 0) term.gray(", ");
-      term.yellow(note.note.pitch.toFixed(1) + "Hz");
+    const noteStrings = notes.map((noteInstance) => {
+      const now = Date.now();
+      const status =
+        now >= noteInstance.startTime && now < noteInstance.endTime
+          ? "▶️"
+          : "⏳";
+      return `${status}${noteInstance.note.pitch.toFixed(1)}Hz`;
     });
-    term("\n");
+    console.log(`${prefix}: ${noteStrings.join(", ")}`);
   }
 };
 
-// Main display loop
-let lastUpdate = 0;
-const updateInterval = 100; // Update every 100ms
-
+// Reactive display function
 const updateDisplay = () => {
+  console.log("\n=== BIRD UPDATE ===");
+
   const majorState = aMajorBird.signal.value;
   const minorState = aMinorBird.signal.value;
 
-  // Only update if enough time has passed
-  const now = Date.now();
-  if (now - lastUpdate < updateInterval) {
+  // Safety check for state
+  if (!majorState || !minorState) {
+    console.log("❌ Error: Bird states not initialized");
     return;
   }
-  lastUpdate = now;
-
-  // Move cursor to top
-  term.moveTo(1, 3);
-
-  // Display current time and position
-  term.cyan(`⏱️  Global Time: ${formatTime(majorState.currentTime)}\n`);
-  term.cyan(
-    `🎯 Current Position: ${formatBeat(majorState.currentBeat)} (Measure ${
-      majorState.currentMeasure + 1
-    }, Beat ${majorState.beatInMeasure + 1})\n\n`
-  );
 
   // Display A Major bird status
-  term.bold.blue("🎼 A MAJOR BIRD:\n");
-  term.blue(
-    `   Active: ${aMajorArrangement[majorState.currentMeasure] ? "✅" : "❌"}\n`
-  );
-  displayNotes(majorState.playingNotes, "   Playing");
-  displayNotes(majorState.upcomingNotes, "   Upcoming");
+  console.log("🎼 A MAJOR BIRD:");
+  displayNotes(majorState.notes, "   Notes");
 
   // Display A Minor bird status
-  term.bold.magenta("\n🎼 A MINOR BIRD:\n");
-  term.magenta(
-    `   Active: ${aMinorArrangement[minorState.currentMeasure] ? "✅" : "❌"}\n`
+  console.log("🎼 A MINOR BIRD:");
+  displayNotes(minorState.notes, "   Notes");
+
+  // Debug information
+  console.log(
+    `🔍 Debug: Major notes: ${majorState.notes?.length || 0}, Minor notes: ${
+      minorState.notes?.length || 0
+    }`
   );
-  displayNotes(minorState.playingNotes, "   Playing");
-  displayNotes(minorState.upcomingNotes, "   Upcoming");
 
-  // Display pattern explanation
-  term(
-    "\n📋 Pattern: A Major (3 measures) → A Minor (1 measure) → Repeat 4x\n"
+  // Show arrangement status
+  const currentTime = Date.now() / 1000; // Simple current time for debugging
+  const loopLength = (16 * 4 * 60) / 120; // 16 measures * 4 beats * 60 seconds / 120 BPM
+  const loopTime = currentTime % loopLength;
+  const currentBeat = (loopTime * 120) / 60;
+  const currentMeasure = Math.floor(currentBeat / 4);
+
+  console.log(
+    `Current measure: ${currentMeasure}, Beat: ${currentBeat.toFixed(2)}`
   );
-  term.gray("   Measures 1-3: A Major | Measure 4: A Minor | etc.\n\n");
+  console.log(
+    `Major active: ${aMajorArrangement[currentMeasure]}, Minor active: ${aMinorArrangement[currentMeasure]}`
+  );
 
-  // Display loop progress
-  const loopProgress = ((majorState.currentBeat % 64) / 64) * 100;
-  term.cyan(`🔄 Loop Progress: ${loopProgress.toFixed(1)}%\n`);
+  // Show arrangement details
+  console.log(
+    `Major arrangement: [${aMajorArrangement
+      .slice(0, 8)
+      .map((b) => (b ? "T" : "F"))
+      .join(",")}...]`
+  );
+  console.log(
+    `Minor arrangement: [${aMinorArrangement
+      .slice(0, 8)
+      .map((b) => (b ? "T" : "F"))
+      .join(",")}...]`
+  );
 
-  // Display upcoming notes summary
-  const totalUpcoming =
-    majorState.upcomingNotes.length + minorState.upcomingNotes.length;
-  term.cyan(`📈 Total Upcoming Notes: ${totalUpcoming}\n`);
+  // Display notes summary
+  const totalNotes =
+    (majorState.notes?.length || 0) + (minorState.notes?.length || 0);
+  console.log(`📈 Total Notes: ${totalNotes}`);
 };
 
-// Start the display loop
-const displayLoop = setInterval(updateDisplay, 50); // Update display every 50ms
+// Track previous signal values to detect changes
+let lastMajorState = null;
+let lastMinorState = null;
+
+// Create reactive effect that updates display when signals change
+effect(() => {
+  // Access the signals to trigger reactivity
+  const majorState = aMajorBird.signal.value;
+  const minorState = aMinorBird.signal.value;
+
+  // Only update display if the signal values have actually changed
+  const majorChanged =
+    JSON.stringify(majorState) !== JSON.stringify(lastMajorState);
+  const minorChanged =
+    JSON.stringify(minorState) !== JSON.stringify(lastMinorState);
+
+  if (majorChanged || minorChanged) {
+    lastMajorState = JSON.parse(JSON.stringify(majorState));
+    lastMinorState = JSON.parse(JSON.stringify(minorState));
+    updateDisplay();
+  }
+});
 
 // Handle cleanup on exit
 process.on("SIGINT", () => {
-  clearInterval(displayLoop);
-  term.clear();
-  term.moveTo(1, 1);
-  term.green("👋 Test completed!\n");
+  // Dispose of the birds
+  aMajorBird.dispose();
+  aMinorBird.dispose();
+
+  console.log("👋 Test completed!");
   process.exit(0);
 });
-
-// Initial display
-updateDisplay();
-
-// Instructions
-term.moveTo(1, term.height - 3);
-term.gray("Press Ctrl+C to exit\n");
